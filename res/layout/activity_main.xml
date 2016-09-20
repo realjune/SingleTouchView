@@ -18,7 +18,27 @@
             android:id="@+id/textview"
             android:layout_width="210dp"
             android:layout_height="176dp"
-            android:background="#88FF0000"/>
+            android:background="#88FF0000" />
+
+        <EditText
+            android:id="@+id/textview1"
+            android:layout_width="210dp"
+            android:layout_height="176dp"
+            android:background="#88FF0000" />
+
+        <EditText
+            android:id="@+id/textview2"
+            android:layout_width="210dp"
+            android:layout_height="176dp"
+            android:background="#88FF0000" />
     </com.example.singletouchview.SingleTouchView>
+
+    <EditText
+        android:id="@+id/textview_foucs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#88FF0000"
+        android:visibility="invisible" />
 
 </FrameLayout>

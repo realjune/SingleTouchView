@@ -1,8 +1,11 @@
 package com.example.singletouchview;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+
+import com.example.singletouchview.SigleTouchItem.OnStateChangedListener;
 
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -20,8 +23,11 @@ import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.FloatMath;
 import android.util.TypedValue;
+import android.view.GestureDetector;
+import android.view.GestureDetector.OnGestureListener;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.View.OnTouchListener;
 import android.widget.FrameLayout;
 
 /**
@@ -162,6 +168,10 @@ public class SingleTouchView extends FrameLayout {
 	 * 是否处于可以缩放，平移，旋转状态
 	 */
 	private boolean isEditable = DEFAULT_EDITABLE;
+	/**
+	 * 用于旋转缩放的Bitmap
+	 */
+	private SigleTouchItem item;
 
 	public SingleTouchView(Context context, AttributeSet attrs) {
 		this(context, attrs, 0);
@@ -274,32 +284,52 @@ public class SingleTouchView extends FrameLayout {
 	public boolean onInterceptTouchEvent(MotionEvent ev) {
 		if (item != null) {
 			if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-				if (editAbleRect.contains((int) ev.getX(), (int) ev.getY())) {
+				mStatus = JudgeStatus(ev.getX(), ev.getY());
+				if (mStatus == STATUS_ROTATE_ZOOM || mStatus == STATUS_DRAG) {
+					Logger.l("onInterceptTouchEvent true");
 					return true;
 				}
 			}
 		}
+		boolean result = super.onInterceptTouchEvent(ev);
+		Logger.l("onInterceptTouchEvent " + result);
 
-		return super.onInterceptTouchEvent(ev);
+		return result;
 	}
 
+	@Override
+	public boolean dispatchTouchEvent(MotionEvent ev) {
+		// TODO Auto-generated method stub
+		return super.dispatchTouchEvent(ev);
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see android.view.View#onTouchEvent(android.view.MotionEvent)
+	 */
 	public boolean onTouchEvent(MotionEvent event) {
-		if (!isEditable) {
+		Logger.l(
+				"SingleTouchEvent acticon=" + event.getAction() + "  status=" + mStatus + " isEditable= " + isEditable);
+		if (mStatus == STATUS_INIT) {
+			if (item != null) {
+				setItem(null);
+			}
 			return super.onTouchEvent(event);
+		}
+		if (item != null) {
+			item.gestureScanner.onTouchEvent(event);
 		}
 		float x = event.getX();
 		float y = event.getY();
 		switch (event.getAction()) {
 		case MotionEvent.ACTION_DOWN:
 			mPreMovePointF.set(x + item.getLeft(), y + item.getTop());
-			mStatus = JudgeStatus(x, y);
-
-			if (!editAbleRect.contains((int) x, (int) y)) {
-				isEditable = false;
-				return super.onTouchEvent(event);
-			}
+			// mStatus = JudgeStatus(x, y);
 			break;
 		case MotionEvent.ACTION_UP:
+		case MotionEvent.ACTION_CANCEL:
+		case MotionEvent.ACTION_OUTSIDE:
 			mStatus = STATUS_INIT;
 
 			break;
@@ -363,19 +393,27 @@ public class SingleTouchView extends FrameLayout {
 				transformDraw();
 
 				if (item != null) {
-					item.onScaleRatasion(scale, scale, mDegree);
+					item.onScaleRotation(scale, scale, mDegree);
 				}
 			} else if (mStatus == STATUS_DRAG) {
-				transformDraw();
-				if (item != null) {
-					item.onMove(mCurMovePointF.x - mPreMovePointF.x, mCurMovePointF.y - mPreMovePointF.y);
-				}
+				onMove(mCurMovePointF.x - mPreMovePointF.x, mCurMovePointF.y - mPreMovePointF.y);
 			}
 
 			mPreMovePointF.set(mCurMovePointF);
 			break;
 		}
 		return true;
+	}
+
+	public void onMove(float dx, float dy) {
+		transformDraw();
+		if (item != null) {
+			item.onMove(dx, dy);
+		}
+	}
+
+	private void onTotateZoom(float fromX, float fromY, float toX, float toY) {
+
 	}
 
 	/**
@@ -548,9 +586,10 @@ public class SingleTouchView extends FrameLayout {
 		// 如果两者之间的距离小于 控制图标的宽度，高度的最小值，则认为点中了控制图标
 		if (distanceToControl < Math.min(mDrawableWidth / 2, mDrawableHeight / 2)) {
 			return STATUS_ROTATE_ZOOM;
+		} else if (editAbleRect.contains((int) x, (int) y)) {
+			return STATUS_DRAG;
 		}
-
-		return STATUS_DRAG;
+		return STATUS_INIT;
 
 	}
 
@@ -699,30 +738,68 @@ public class SingleTouchView extends FrameLayout {
 	}
 
 	public void setItem(SigleTouchItem item) {
+		if (this.item == item) {
+			return;
+		}
+		if (this.item != null) {
+			this.item.onUnbind();
+		}
 		this.item = item;
 		isEditable = item != null;
 		if (item != null) {
 			RectF postRect = item.getPostRect();
 			mControlPoint.x = (int) postRect.centerX();
 			mControlPoint.y = (int) postRect.centerY();
+			mScale = item.getScale();
+			mDegree = item.getRotation();
 		}
 		transformDraw();
 	}
 
-	/**
-	 * 用于旋转缩放的Bitmap
-	 */
-	private SigleTouchItem item;
+	private List<SigleTouchItem> views = new ArrayList<SigleTouchItem>();
 
+	public boolean add(View v, OnStateChangedListener onStateChangedListener) {
+		SigleTouchItem item = new SigleTouchItem(this, v, onStateChangedListener);
+		return views.add(item);
+	}
+
+	public boolean remove(View v) {
+		for (int i = 0, end = views.size(); i < end; i++) {
+			SigleTouchItem item = views.get(i);
+			if (item.getView() == v) {
+				item.destroy();
+				views.remove(i);
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 class SigleTouchItem {
+	private SingleTouchView mSingleTouchView;
+	private View view;
+	private float translationX, translationY;
+	private OnStateChangedListener mOnStateChangedListener;
 
-	View view;
-	float translationX, translationY;
+	public GestureDetector gestureScanner;
 
-	public SigleTouchItem(View view) {
+	public SigleTouchItem(SingleTouchView singleTouchView, View view, OnStateChangedListener onStateChangedListener) {
 		this.view = view;
+		this.mOnStateChangedListener = onStateChangedListener;
+		this.mSingleTouchView = singleTouchView;
+
+		gestureScanner = new GestureDetector(mOnGestureListener);
+		gestureScanner.setOnDoubleTapListener(mOnDoubleTapListener);
+		view.setOnTouchListener(itemOnTouchListener);
+	}
+
+	public void destroy() {
+		view.setOnTouchListener(null);
+	}
+
+	public View getView() {
+		return view;
 	}
 
 	public void onMove(float dx, float dy) {
@@ -739,10 +816,18 @@ class SigleTouchItem {
 		view.setTranslationY(translationY);
 	}
 
-	public void onScaleRatasion(float scaleX, float scaleY, float mDegree) {
+	public void onScaleRotation(float scaleX, float scaleY, float mDegree) {
 		view.setScaleX(scaleX);
 		view.setScaleY(scaleY);
 		view.setRotation(mDegree);
+	}
+
+	public float getScale() {
+		return view.getScaleX();
+	}
+
+	public float getRotation() {
+		return view.getRotation();
 	}
 
 	public int getWidth() {
@@ -796,6 +881,100 @@ class SigleTouchItem {
 		postRect.offset(view.getTranslationX(), view.getTranslationY());
 		postRect.inset(-(view.getScaleX() - 1) * view.getWidth() / 2, -(view.getScaleY() - 1) * view.getHeight() / 2);
 		return postRect;
+	}
+
+	protected void onDoubleClicked() {
+		mSingleTouchView.setItem(this);
+		if (mOnStateChangedListener != null) {
+			mOnStateChangedListener.onDoubleClick(view);
+		}
+	}
+
+	protected void onClicked() {
+		mSingleTouchView.setItem(this);
+		if (mOnStateChangedListener != null) {
+			mOnStateChangedListener.onClicked(view);
+		}
+	}
+
+	protected void onUnbind() {
+		if (mOnStateChangedListener != null) {
+			mOnStateChangedListener.onUnbind(view);
+		}
+	}
+
+	private OnTouchListener itemOnTouchListener = new OnTouchListener() {
+
+		@Override
+		public boolean onTouch(View v, MotionEvent event) {
+			Logger.l("itemTouchEvent" + event.getAction());
+			view = v;
+			gestureScanner.onTouchEvent(event);
+			return true;
+		}
+	};
+
+	private OnGestureListener mOnGestureListener = new OnGestureListener() {
+
+		@Override
+		public boolean onSingleTapUp(MotionEvent e) {
+			return false;
+		}
+
+		@Override
+		public void onShowPress(MotionEvent e) {
+		}
+
+		@Override
+		public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+			// Logger.l("onScroll ------ x = " + (-distanceX) + " y = " +
+			// (-distanceY));
+			// mSingleTouchView.onMove(-distanceX, -distanceY);
+			return false;
+		}
+
+		@Override
+		public void onLongPress(MotionEvent e) {
+		}
+
+		@Override
+		public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
+			return false;
+		}
+
+		@Override
+		public boolean onDown(MotionEvent e) {
+			return false;
+		}
+	};
+	private GestureDetector.OnDoubleTapListener mOnDoubleTapListener = new GestureDetector.OnDoubleTapListener() {
+		public boolean onDoubleTap(MotionEvent e) {
+			// 双击时产生一次
+			Logger.l("onDoubleTap");
+			onDoubleClicked();
+			return true;
+		}
+
+		public boolean onDoubleTapEvent(MotionEvent e) {
+			// 双击时产生两次
+			Logger.l("onDoubleTapEvent");
+			return false;
+		}
+
+		public boolean onSingleTapConfirmed(MotionEvent e) {
+			// 短快的点击算一次单击
+			Logger.l("onSingleTapConfirmed");
+			onClicked();
+			return true;
+		}
+	};
+
+	public interface OnStateChangedListener {
+		void onDoubleClick(View view);
+
+		void onClicked(View view);
+
+		void onUnbind(View view);
 	}
 
 }
