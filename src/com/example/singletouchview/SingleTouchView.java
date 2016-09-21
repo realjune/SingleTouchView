@@ -1,11 +1,7 @@
 package com.example.singletouchview;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
-
-import com.example.singletouchview.SigleTouchItem.OnStateChangedListener;
 
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -21,28 +17,28 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
-import android.util.FloatMath;
 import android.util.TypedValue;
 import android.view.GestureDetector;
 import android.view.GestureDetector.OnGestureListener;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.View.OnTouchListener;
 import android.widget.FrameLayout;
+import wu.a.utils.MathUtils;
 
 /**
  * 单手对图片进行缩放，旋转，平移操作，详情请查看
  * 
  * @blog http://blog.csdn.net/xiaanming/article/details/42833893
  * 
- * @author xiaanming
+ * @author junxu.wang
  *
  */
 public class SingleTouchView extends FrameLayout {
+	private boolean isDebug = true;
 	/**
 	 * 图片的最大缩放比例
 	 */
-	public static final float MAX_SCALE = 10.0f;
+	public static final float MAX_SCALE = 4.0f;
 
 	/**
 	 * 图片的最小缩放比例
@@ -65,7 +61,7 @@ public class SingleTouchView extends FrameLayout {
 	public static final int DEFAULT_FRAME_COLOR = Color.WHITE;
 	public static final float DEFAULT_SCALE = 1.0f;
 	public static final float DEFAULT_DEGREE = 0;
-	public static final int DEFAULT_CONTROL_LOCATION = RIGHT_TOP;
+	public static final int DEFAULT_CONTROL_LOCATION = RIGHT_BOTTOM;
 	public static final boolean DEFAULT_EDITABLE = false;
 
 	/**
@@ -85,10 +81,6 @@ public class SingleTouchView extends FrameLayout {
 	private Point mRTPoint;
 	private Point mRBPoint;
 	private Point mLBPoint;
-	/**
-	 * 编辑区
-	 */
-	private Rect editAbleRect = new Rect();
 
 	/**
 	 * 用于缩放，旋转的控制点的坐标
@@ -96,9 +88,21 @@ public class SingleTouchView extends FrameLayout {
 	private Point mControlPoint = new Point();
 
 	/**
+	 * 用于关闭的控制点的坐标
+	 */
+	private Point mClosePoint = new Point();
+
+	/**
+	 * 用于设置的控制点的坐标
+	 */
+	private Point mSettingPoint = new Point();
+
+	/**
 	 * 用于缩放，旋转的图标
 	 */
 	private Drawable controlDrawable;
+	private Drawable settingDrawable;
+	private Drawable closeDrawable;
 
 	/**
 	 * 缩放，旋转图标的宽和高
@@ -134,6 +138,13 @@ public class SingleTouchView extends FrameLayout {
 	 */
 	public static final int STATUS_ROTATE_ZOOM = 2;
 
+	public static final int STATUS_CLOSE_PRESSED = 3;
+
+	/**
+	 * 设置状态
+	 */
+	public static final int STATUS_SETTING = 4;
+
 	/**
 	 * 当前所处的状态
 	 */
@@ -156,8 +167,10 @@ public class SingleTouchView extends FrameLayout {
 
 	private DisplayMetrics metrics;
 
+	private PointF mDownPointF = new PointF();
 	private PointF mPreMovePointF = new PointF();
 	private PointF mCurMovePointF = new PointF();
+	private float offScaleDis, originScaleDis;
 
 	/**
 	 * 控制图标所在的位置（比如左上，右上，左下，右下）
@@ -165,9 +178,20 @@ public class SingleTouchView extends FrameLayout {
 	private int controlLocation = DEFAULT_CONTROL_LOCATION;
 
 	/**
+	 * 关闭图标所在的位置（比如左上，右上，左下，右下）
+	 */
+	private int closeLocation = LEFT_TOP;
+
+	/**
+	 * 设置图标所在的位置（比如左上，右上，左下，右下）
+	 */
+	private int settingLocation = RIGHT_TOP;
+
+	/**
 	 * 是否处于可以缩放，平移，旋转状态
 	 */
 	private boolean isEditable = DEFAULT_EDITABLE;
+
 	/**
 	 * 用于旋转缩放的Bitmap
 	 */
@@ -189,7 +213,7 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 获取自定义属性
-	 * 
+	 *
 	 * @param attrs
 	 */
 	private void obtainStyledAttributes(AttributeSet attrs) {
@@ -220,36 +244,63 @@ public class SingleTouchView extends FrameLayout {
 		mPaint.setStyle(Style.STROKE);
 
 		if (controlDrawable == null) {
-			controlDrawable = getContext().getResources().getDrawable(R.drawable.st_rotate_icon);
+			controlDrawable = getContext().getResources().getDrawable(R.drawable.frag_pic_rotate_icon);
+			settingDrawable = getContext().getResources().getDrawable(R.drawable.st_rotate_icon);
+			closeDrawable = getContext().getResources().getDrawable(R.drawable.frag_pic_remove_icon);
 		}
 
 		mDrawableWidth = controlDrawable.getIntrinsicWidth();
 		mDrawableHeight = controlDrawable.getIntrinsicHeight();
 		mDrawableRect = new Rect(0, 0, mDrawableWidth, mDrawableHeight);
+
+		gestureScanner = new GestureDetector(mOnGestureListener);
+		gestureScanner.setOnDoubleTapListener(mOnDoubleTapListener);
 	}
 
-	public void draw(Canvas canvas) {
-		super.draw(canvas);
-		// 处于可编辑状态才画边框和控制图标
-		mPaint.setColor(0xFF009988);
+	public void dispatchDraw(Canvas canvas) {
+		super.dispatchDraw(canvas);
 		if (isEditable) {
+
+			// 处于可编辑状态才画边框和控制图标
+			mPaint.setColor(0xFF009988);
 			canvas.drawPath(mPath, mPaint);
+			
 			// 画旋转, 缩放图标
 			controlDrawable.setBounds(mControlPoint.x - mDrawableWidth / 2, mControlPoint.y - mDrawableHeight / 2,
 					mControlPoint.x + mDrawableWidth / 2, mControlPoint.y + mDrawableHeight / 2);
 			controlDrawable.draw(canvas);
 
-			RectF postRectF = new RectF(item.getPostRect());
-			postRectF.inset(-framePadding, -framePadding);
-			mPaint.setColor(0xFF00FF00);
-			canvas.drawRect(postRectF, mPaint);
+			// 画关闭图标
+			closeDrawable.setBounds(mClosePoint.x - mDrawableWidth / 2, mClosePoint.y - mDrawableHeight / 2,
+					mClosePoint.x + mDrawableWidth / 2, mClosePoint.y + mDrawableHeight / 2);
+			closeDrawable.draw(canvas);
 
-			mPaint.setColor(0xFF00ff00);
-			canvas.drawRect(editAbleRect, mPaint);
+			// 画设置图标
+			// settingDrawable.setBounds(mSettingPoint.x - mDrawableWidth / 2,
+			// mSettingPoint.y - mDrawableHeight / 2,
+			// mSettingPoint.x + mDrawableWidth / 2, mSettingPoint.y +
+			// mDrawableHeight / 2);
+			// settingDrawable.draw(canvas);
 
-			mPaint.setColor(0xFF00ffFF);
-			canvas.drawRect(mDrawableRect, mPaint);
+			if (isDebug) {
 
+				// item 面积
+				RectF postRectF = new RectF(item.getPostRect());
+				mPaint.setColor(0xFF00FF00);
+				canvas.drawRect(postRectF, mPaint);
+
+				// 操作柄区域
+				mPaint.setColor(0xFF00ffFF);
+				canvas.drawRect(mDrawableRect, mPaint);
+
+				// 图形矩形区域
+				mPaint.setColor(0xFF888888);
+				canvas.drawRect(item.getPostArea(), mPaint);
+
+				// 图形矩形区域
+				mPaint.setColor(0xFF000000);
+				canvas.drawCircle(item.getCenter().x, item.getCenter().y, 10, mPaint);
+			}
 		}
 	}
 
@@ -262,13 +313,8 @@ public class SingleTouchView extends FrameLayout {
 			postRectF.inset(-framePadding, -framePadding);
 			computeRect((int) postRectF.left, (int) postRectF.top, (int) postRectF.right, (int) postRectF.bottom,
 					mDegree);
-			editAbleRect.set(getMinValue(mLTPoint.x, mRTPoint.x, mRBPoint.x, mLBPoint.x),
-					getMinValue(mLTPoint.y, mRTPoint.y, mRBPoint.y, mLBPoint.y),
-					getMaxValue(mLTPoint.x, mRTPoint.x, mRBPoint.x, mLBPoint.x),
-					getMaxValue(mLTPoint.y, mRTPoint.y, mRBPoint.y, mLBPoint.y));
 			mDrawableRect.offsetTo(mControlPoint.x - mDrawableRect.width() / 2,
 					mControlPoint.y - mDrawableRect.height() / 2);
-			editAbleRect.union(mDrawableRect);
 			mPath.reset();
 			mPath.moveTo(mLTPoint.x, mLTPoint.y);
 			mPath.lineTo(mRTPoint.x, mRTPoint.y);
@@ -282,19 +328,22 @@ public class SingleTouchView extends FrameLayout {
 
 	@Override
 	public boolean onInterceptTouchEvent(MotionEvent ev) {
+		boolean result = false;
 		if (item != null) {
 			if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-				mStatus = JudgeStatus(ev.getX(), ev.getY());
-				if (mStatus == STATUS_ROTATE_ZOOM || mStatus == STATUS_DRAG) {
-					Logger.l("onInterceptTouchEvent true");
-					return true;
+				int mStatus = JudgeStatus(ev.getX(), ev.getY());
+				if (mStatus == STATUS_ROTATE_ZOOM && mStatus == STATUS_CLOSE_PRESSED) {
+					result = true;
 				}
 			}
 		}
-		boolean result = super.onInterceptTouchEvent(ev);
-		Logger.l("onInterceptTouchEvent " + result);
-
-		return result;
+		Logger.l("onInterceptTouchEvent   " + result);
+		if (result) {
+			return result;
+		} else {
+			setFoucs(false);
+			return super.onInterceptTouchEvent(ev);
+		}
 	}
 
 	@Override
@@ -305,52 +354,73 @@ public class SingleTouchView extends FrameLayout {
 
 	/*
 	 * (non-Javadoc)
-	 * 
+	 *
 	 * @see android.view.View#onTouchEvent(android.view.MotionEvent)
 	 */
 	public boolean onTouchEvent(MotionEvent event) {
-		Logger.l(
-				"SingleTouchEvent acticon=" + event.getAction() + "  status=" + mStatus + " isEditable= " + isEditable);
-		if (mStatus == STATUS_INIT) {
-			if (item != null) {
-				setItem(null);
-			}
+		if (item == null) {
 			return super.onTouchEvent(event);
 		}
-		if (item != null) {
-			item.gestureScanner.onTouchEvent(event);
-		}
+
 		float x = event.getX();
 		float y = event.getY();
+		mCurMovePointF.set(x, y);
+
+		gestureScanner.onTouchEvent(event);
 		switch (event.getAction()) {
 		case MotionEvent.ACTION_DOWN:
-			mPreMovePointF.set(x + item.getLeft(), y + item.getTop());
-			// mStatus = JudgeStatus(x, y);
+			mStatus = JudgeStatus(event.getX(), event.getY());
+			if (mStatus == STATUS_INIT) {
+				if (item != null) {
+					setItem(null);
+				}
+				return super.onTouchEvent(event);
+			}
+
+			mDownPointF.set(x, y);
+			mPreMovePointF.set(x, y);
+
+			if (mStatus == STATUS_ROTATE_ZOOM) {
+				int halfBitmapWidth = item.getWidth() / 2;
+				int halfBitmapHeight = item.getHeight() / 2;
+
+				// 图片某个点到图片中心的距离
+				originScaleDis = (float) Math
+						.sqrt(halfBitmapWidth * halfBitmapWidth + halfBitmapHeight * halfBitmapHeight);
+
+				offScaleDis = distance4PointF(item.getCenter(), mPreMovePointF) - distance4PointF(item.getCenter(),
+						new PointF(item.getPostRect().right, item.getPostRect().bottom));
+			}
 			break;
 		case MotionEvent.ACTION_UP:
+			float moveDis = distance4PointF(mDownPointF, mCurMovePointF);
+			if (moveDis < 10) {
+				switch (mStatus) {
+				case STATUS_SETTING:
+					if (item != null) {
+						item.onSetting();
+					}
+					break;
+				case STATUS_CLOSE_PRESSED:
+					if (item != null) {
+						item.onClosed();
+					}
+					break;
+				}
+			}
+
 		case MotionEvent.ACTION_CANCEL:
 		case MotionEvent.ACTION_OUTSIDE:
 			mStatus = STATUS_INIT;
 
 			break;
 		case MotionEvent.ACTION_MOVE:
-			mCurMovePointF.set(x + item.getLeft(), y + item.getTop());
 			if (mStatus == STATUS_ROTATE_ZOOM) {
 				float scale = 1f;
-
-				int halfBitmapWidth = item.getWidth() / 2;
-				int halfBitmapHeight = item.getHeight() / 2;
-
-				// 图片某个点到图片中心的距离
-				float bitmapToCenterDistance = FloatMath
-						.sqrt(halfBitmapWidth * halfBitmapWidth + halfBitmapHeight * halfBitmapHeight);
-
 				// 移动的点到图片中心的距离
-				float moveToCenterDistance = distance4PointF(item.getCenter(), mCurMovePointF);
-
+				float moveToCenterDistance = distance4PointF(item.getCenter(), mCurMovePointF) - offScaleDis;
 				// 计算缩放比例
-				scale = moveToCenterDistance / bitmapToCenterDistance;
-
+				scale = moveToCenterDistance / originScaleDis;
 				// 缩放比例的界限判断
 				if (scale <= MIN_SCALE) {
 					scale = MIN_SCALE;
@@ -370,7 +440,7 @@ public class SingleTouchView extends FrameLayout {
 				}
 
 				double radian = Math.acos(cosb);
-				float newDegree = (float) radianToDegree(radian);
+				float newDegree = (float) MathUtils.radianToDegree(radian);
 
 				// center -> proMove的向量， 我们使用PointF来实现
 				PointF centerToProMove = new PointF((mPreMovePointF.x - item.getCenter().x),
@@ -412,13 +482,9 @@ public class SingleTouchView extends FrameLayout {
 		}
 	}
 
-	private void onTotateZoom(float fromX, float fromY, float toX, float toY) {
-
-	}
-
 	/**
 	 * 获取四个点和View的大小
-	 * 
+	 *
 	 * @param left
 	 * @param top
 	 * @param right
@@ -431,16 +497,18 @@ public class SingleTouchView extends FrameLayout {
 		Point rb = new Point(right, bottom);
 		Point lb = new Point(left, bottom);
 		Point cp = new Point((left + right) / 2, (top + bottom) / 2);
-		mLTPoint = obtainRoationPoint(cp, lt, degree);
-		mRTPoint = obtainRoationPoint(cp, rt, degree);
-		mRBPoint = obtainRoationPoint(cp, rb, degree);
-		mLBPoint = obtainRoationPoint(cp, lb, degree);
+		mLTPoint = MathUtils.obtainRoationPoint(cp, lt, degree);
+		mRTPoint = MathUtils.obtainRoationPoint(cp, rt, degree);
+		mRBPoint = MathUtils.obtainRoationPoint(cp, rb, degree);
+		mLBPoint = MathUtils.obtainRoationPoint(cp, lb, degree);
 		mControlPoint = LocationToPoint(controlLocation);
+		mClosePoint = LocationToPoint(closeLocation);
+		mSettingPoint = LocationToPoint(settingLocation);
 	}
 
 	/**
 	 * 根据位置判断控制图标处于那个点
-	 * 
+	 *
 	 * @return
 	 */
 	private Point LocationToPoint(int location) {
@@ -458,120 +526,8 @@ public class SingleTouchView extends FrameLayout {
 	}
 
 	/**
-	 * 获取变长参数最大的值
-	 * 
-	 * @param array
-	 * @return
-	 */
-	public int getMaxValue(Integer... array) {
-		List<Integer> list = Arrays.asList(array);
-		Collections.sort(list);
-		return list.get(list.size() - 1);
-	}
-
-	/**
-	 * 获取变长参数最大的值
-	 * 
-	 * @param array
-	 * @return
-	 */
-	public int getMinValue(Integer... array) {
-		List<Integer> list = Arrays.asList(array);
-		Collections.sort(list);
-		return list.get(0);
-	}
-
-	/**
-	 * 获取旋转某个角度之后的点
-	 * 
-	 * @param viewCenter
-	 * @param source
-	 * @param degree
-	 * @return
-	 */
-	public static Point obtainRoationPoint(Point center, Point source, float degree) {
-		// 两者之间的距离
-		Point disPoint = new Point();
-		disPoint.x = source.x - center.x;
-		disPoint.y = source.y - center.y;
-
-		// 没旋转之前的弧度
-		double originRadian = 0;
-
-		// 没旋转之前的角度
-		double originDegree = 0;
-
-		// 旋转之后的角度
-		double resultDegree = 0;
-
-		// 旋转之后的弧度
-		double resultRadian = 0;
-
-		// 经过旋转之后点的坐标
-		Point resultPoint = new Point();
-
-		double distance = Math.sqrt(disPoint.x * disPoint.x + disPoint.y * disPoint.y);
-		if (disPoint.x == 0 && disPoint.y == 0) {
-			return center;
-			// 第一象限
-		} else if (disPoint.x >= 0 && disPoint.y >= 0) {
-			// 计算与x正方向的夹角
-			originRadian = Math.asin(disPoint.y / distance);
-
-			// 第二象限
-		} else if (disPoint.x < 0 && disPoint.y >= 0) {
-			// 计算与x正方向的夹角
-			originRadian = Math.asin(Math.abs(disPoint.x) / distance);
-			originRadian = originRadian + Math.PI / 2;
-
-			// 第三象限
-		} else if (disPoint.x < 0 && disPoint.y < 0) {
-			// 计算与x正方向的夹角
-			originRadian = Math.asin(Math.abs(disPoint.y) / distance);
-			originRadian = originRadian + Math.PI;
-		} else if (disPoint.x >= 0 && disPoint.y < 0) {
-			// 计算与x正方向的夹角
-			originRadian = Math.asin(disPoint.x / distance);
-			originRadian = originRadian + Math.PI * 3 / 2;
-		}
-
-		// 弧度换算成角度
-		originDegree = radianToDegree(originRadian);
-		resultDegree = originDegree + degree;
-
-		// 角度转弧度
-		resultRadian = degreeToRadian(resultDegree);
-
-		resultPoint.x = (int) Math.round(distance * Math.cos(resultRadian));
-		resultPoint.y = (int) Math.round(distance * Math.sin(resultRadian));
-		resultPoint.x += center.x;
-		resultPoint.y += center.y;
-
-		return resultPoint;
-	}
-
-	/**
-	 * 弧度换算成角度
-	 * 
-	 * @return
-	 */
-	public static double radianToDegree(double radian) {
-		return radian * 180 / Math.PI;
-	}
-
-	/**
-	 * 角度换算成弧度
-	 * 
-	 * @param degree
-	 * @return
-	 */
-	public static double degreeToRadian(double degree) {
-		return degree * Math.PI / 180;
-	}
-
-	/**
 	 * 根据点击的位置判断是否点中控制旋转，缩放的图片， 初略的计算
-	 * 
+	 *
 	 * @param x
 	 * @param y
 	 * @return
@@ -584,13 +540,33 @@ public class SingleTouchView extends FrameLayout {
 		float distanceToControl = distance4PointF(touchPoint, controlPointF);
 
 		// 如果两者之间的距离小于 控制图标的宽度，高度的最小值，则认为点中了控制图标
-		if (distanceToControl < Math.min(mDrawableWidth / 2, mDrawableHeight / 2)) {
+		if (distanceToControl < Math.min(mDrawableWidth, mDrawableHeight) / 2) {
 			return STATUS_ROTATE_ZOOM;
-		} else if (editAbleRect.contains((int) x, (int) y)) {
+		} else if (isInSircleAear(mClosePoint, Math.min(mDrawableWidth, mDrawableHeight) / 2, x, y)) {
+			return STATUS_CLOSE_PRESSED;
+		} /*
+			 * else if (isInSircleAear(mSettingPoint, Math.min(mDrawableWidth,
+			 * mDrawableHeight) / 2, x, y)) { return STATUS_SETTING; }
+			 */
+		else if (isFoucs() && item.getPostArea().contains((int) x, (int) y)) {
 			return STATUS_DRAG;
 		}
 		return STATUS_INIT;
 
+	}
+
+	/**
+	 * 圆心center半径r是否包含x,y
+	 *
+	 * @param center
+	 * @param r
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	private boolean isInSircleAear(Point center, float r, float x, float y) {
+		float distanceToControl = distance4PointF(center.x, center.y, x, y);
+		return distanceToControl < r;
 	}
 
 	public float getImageDegree() {
@@ -599,7 +575,7 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 设置图片旋转角度
-	 * 
+	 *
 	 * @param degree
 	 */
 	public void setImageDegree(float degree) {
@@ -615,7 +591,7 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 设置图片缩放比例
-	 * 
+	 *
 	 * @param scale
 	 */
 	public void setImageScale(float scale) {
@@ -632,7 +608,7 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 设置控制图标
-	 * 
+	 *
 	 * @param drawable
 	 */
 	public void setControlDrawable(Drawable drawable) {
@@ -680,8 +656,6 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 设置控制图标的位置, 设置的值只能选择LEFT_TOP ，RIGHT_TOP， RIGHT_BOTTOM，LEFT_BOTTOM
-	 * 
-	 * @param controlLocation
 	 */
 	public void setControlLocation(int location) {
 		if (this.controlLocation == location)
@@ -700,7 +674,7 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 设置是否处于可缩放，平移，旋转状态
-	 * 
+	 *
 	 * @param isEditable
 	 */
 	public void setEditable(boolean isEditable) {
@@ -710,17 +684,26 @@ public class SingleTouchView extends FrameLayout {
 
 	/**
 	 * 两个点之间的距离
-	 * 
-	 * @param x1
-	 * @param y1
-	 * @param x2
-	 * @param y2
+	 *
 	 * @return
 	 */
 	private float distance4PointF(PointF pf1, PointF pf2) {
 		float disX = pf2.x - pf1.x;
 		float disY = pf2.y - pf1.y;
-		return FloatMath.sqrt(disX * disX + disY * disY);
+		return (float) Math.sqrt(disX * disX + disY * disY);
+	}
+
+	/**
+	 * 两个点之间的距离
+	 *
+	 * @param x1
+	 * @param y1
+	 * @return
+	 */
+	private float distance4PointF(float x, float y, float x1, float y1) {
+		float disX = x1 - x;
+		float disY = y1 - y;
+		return (float) Math.sqrt(disX * disX + disY * disY);
 	}
 
 	@SuppressWarnings("serial")
@@ -737,6 +720,16 @@ public class SingleTouchView extends FrameLayout {
 
 	}
 
+	private boolean isFoucs;
+
+	public boolean isFoucs() {
+		return isFoucs;
+	}
+
+	public void setFoucs(boolean f) {
+		this.isFoucs = f;
+	}
+
 	public void setItem(SigleTouchItem item) {
 		if (this.item == item) {
 			return;
@@ -747,6 +740,9 @@ public class SingleTouchView extends FrameLayout {
 		this.item = item;
 		isEditable = item != null;
 		if (item != null) {
+			if (!item.isPrepared()) {
+				item.prepare();
+			}
 			RectF postRect = item.getPostRect();
 			mControlPoint.x = (int) postRect.centerX();
 			mControlPoint.y = (int) postRect.centerY();
@@ -756,7 +752,15 @@ public class SingleTouchView extends FrameLayout {
 		transformDraw();
 	}
 
+	public SigleTouchItem getItem() {
+		return item;
+	}
+
 	private List<SigleTouchItem> views = new ArrayList<SigleTouchItem>();
+
+	public List<SigleTouchItem> getItems() {
+		return views;
+	}
 
 	public boolean add(View v, OnStateChangedListener onStateChangedListener) {
 		SigleTouchItem item = new SigleTouchItem(this, v, onStateChangedListener);
@@ -769,151 +773,243 @@ public class SingleTouchView extends FrameLayout {
 			if (item.getView() == v) {
 				item.destroy();
 				views.remove(i);
+				if (getItem() == item) {
+					setItem(null);
+				}
 				return true;
 			}
 		}
 		return false;
 	}
-}
 
-class SigleTouchItem {
-	private SingleTouchView mSingleTouchView;
-	private View view;
-	private float translationX, translationY;
-	private OnStateChangedListener mOnStateChangedListener;
+	public boolean removeAll() {
+		setItem(null);
+		views.clear();
+		return true;
+	}
+
+	public boolean move(View v, int index) {
+		if (views.get(index).getView() != v) {
+			for (int i = 0, end = views.size(); i < end; i++) {
+				SigleTouchItem item = views.get(i);
+				if (item.getView() == v) {
+					views.remove(i);
+					views.add(index, item);
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	public class SigleTouchItem {
+		private SingleTouchView mSingleTouchView;
+		private View view;
+		private float translationX, translationY;
+		private OnStateChangedListener mOnStateChangedListener;
+
+		private boolean isPrepared;
+
+		/**
+		 * 缩放后位置大小
+		 */
+		private RectF postRect = new RectF();
+		/**
+		 * 旋转后所占区域
+		 */
+		private RectF rectArea = new RectF();
+
+		/**
+		 * 图片四个点坐标
+		 */
+		private Point mLTPoint;
+		private Point mRTPoint;
+		private Point mRBPoint;
+		private Point mLBPoint;
+
+		public SigleTouchItem(SingleTouchView singleTouchView, View view,
+				OnStateChangedListener onStateChangedListener) {
+			this.view = view;
+			this.mOnStateChangedListener = onStateChangedListener;
+			this.mSingleTouchView = singleTouchView;
+
+			view.setOnTouchListener(itemOnTouchListener);
+		}
+
+		public void prepare() {
+			isPrepared = true;
+			postRect.set(view.getLeft(), view.getTop(), view.getRight(), view.getBottom());
+			postRect.offset(view.getTranslationX(), view.getTranslationY());
+			postRect.inset(-(view.getScaleX() - 1) * view.getWidth() / 2,
+					-(view.getScaleY() - 1) * view.getHeight() / 2);
+			computeRect(postRect, getRotation());
+		}
+
+		public boolean isPrepared() {
+			return isPrepared;
+		}
+
+		public void destroy() {
+			view.setOnTouchListener(null);
+			view = null;
+			mOnStateChangedListener = null;
+		}
+
+		public View getView() {
+			return view;
+		}
+
+		public void onMove(float dx, float dy) {
+			translationX += dx;
+			translationY += dy;
+			view.setTranslationX(translationX);
+			view.setTranslationY(translationY);
+
+			postRect.offset(dx, dy);
+
+			rectArea.offset(dx, dy);
+
+		}
+
+		public void onScaleRotation(float scaleX, float scaleY, float mDegree) {
+			view.setScaleX(scaleX);
+			view.setScaleY(scaleY);
+			view.setRotation(mDegree);
+			postRect.inset((postRect.width() - view.getScaleX() * view.getWidth()) / 2,
+					(postRect.height() - view.getScaleY() * view.getHeight()) / 2);
+
+			computeRect(postRect, mDegree);
+		}
+
+		public float getScale() {
+			return view.getScaleX();
+		}
+
+		public float getRotation() {
+			return view.getRotation();
+		}
+
+		public int getWidth() {
+			return view.getWidth();
+		}
+
+		public int getHeight() {
+			return view.getHeight();
+		}
+
+		public int getLeft() {
+			return view.getLeft();
+		}
+
+		public int getTop() {
+			return view.getTop();
+		}
+
+		public int getRight() {
+			return view.getRight();
+		}
+
+		public int getBottom() {
+			return view.getBottom();
+		}
+
+		public PointF getCenter() {
+			return new PointF(postRect.centerX(), postRect.centerY());
+		}
+
+		public float getTranlateX() {
+			return view.getTranslationX();
+		}
+
+		public float getTranlateY() {
+			return view.getTranslationY();
+		}
+
+		public RectF getPostRect() {
+			return postRect;
+		}
+
+		public RectF getPostArea() {
+			return rectArea;
+		}
+
+		/**
+		 * 获取四个点和View的大小
+		 *
+		 * @param degree
+		 */
+		private void computeRect(RectF rect, float degree) {
+			Point lt = new Point((int) (rect.left), (int) rect.top);
+			Point rt = new Point((int) rect.right, (int) rect.top);
+			Point rb = new Point((int) rect.right, (int) rect.bottom);
+			Point lb = new Point((int) rect.left, (int) rect.bottom);
+			Point cp = new Point((int) rect.centerX(), (int) rect.centerY());
+			mLTPoint = MathUtils.obtainRoationPoint(cp, lt, degree);
+			mRTPoint = MathUtils.obtainRoationPoint(cp, rt, degree);
+			mRBPoint = MathUtils.obtainRoationPoint(cp, rb, degree);
+			mLBPoint = MathUtils.obtainRoationPoint(cp, lb, degree);
+			rectArea.set(MathUtils.getMinValue(mLTPoint.x, mRTPoint.x, mRBPoint.x, mLBPoint.x),
+					MathUtils.getMinValue(mLTPoint.y, mRTPoint.y, mRBPoint.y, mLBPoint.y),
+					MathUtils.getMaxValue(mLTPoint.x, mRTPoint.x, mRBPoint.x, mLBPoint.x),
+					MathUtils.getMaxValue(mLTPoint.y, mRTPoint.y, mRBPoint.y, mLBPoint.y));
+			rectArea.offsetTo((rect.centerX() - rectArea.width() / 2), (rect.centerY() - rectArea.height() / 2));
+		}
+
+		protected void onDoubleClicked() {
+			Logger.l("onDoubleClicked item");
+			mSingleTouchView.setItem(this);
+			if (mOnStateChangedListener != null) {
+				mOnStateChangedListener.onDoubleClick(view);
+			}
+		}
+
+		protected void onClicked() {
+			if (view == null) {
+				return;
+			}
+			prepare();
+			mSingleTouchView.setItem(this);
+			if (mOnStateChangedListener != null) {
+				mOnStateChangedListener.onClicked(view);
+			}
+		}
+
+		protected void onUnbind() {
+			if (mOnStateChangedListener != null) {
+				mOnStateChangedListener.onUnbind(view);
+			}
+		}
+
+		protected void onSetting() {
+			if (mOnStateChangedListener != null) {
+				mOnStateChangedListener.onSetting(view);
+			}
+		}
+
+		protected void onClosed() {
+			if (mOnStateChangedListener != null) {
+				mOnStateChangedListener.onClosed(view);
+			}
+		}
+
+		private OnTouchListener itemOnTouchListener = new OnTouchListener() {
+
+			@Override
+			public boolean onTouch(View v, MotionEvent event) {
+				view = v;
+				// gestureScanner.onTouchEvent(event);
+				if (event.getAction() == MotionEvent.ACTION_DOWN) {
+					if (!mSingleTouchView.isFoucs()) {
+						mSingleTouchView.setFoucs(true);
+						mSingleTouchView.setItem(SigleTouchItem.this);
+					}
+				}
+				return false;
+			}
+		};
+	}
 
 	public GestureDetector gestureScanner;
-
-	public SigleTouchItem(SingleTouchView singleTouchView, View view, OnStateChangedListener onStateChangedListener) {
-		this.view = view;
-		this.mOnStateChangedListener = onStateChangedListener;
-		this.mSingleTouchView = singleTouchView;
-
-		gestureScanner = new GestureDetector(mOnGestureListener);
-		gestureScanner.setOnDoubleTapListener(mOnDoubleTapListener);
-		view.setOnTouchListener(itemOnTouchListener);
-	}
-
-	public void destroy() {
-		view.setOnTouchListener(null);
-	}
-
-	public View getView() {
-		return view;
-	}
-
-	public void onMove(float dx, float dy) {
-		translationX += dx;
-		translationY += dy;
-		getCenter();
-		centerPoint.x += dx;
-		centerPoint.y += dy;
-		onTranlate(translationX, translationY);
-	}
-
-	private void onTranlate(float translationX, float translationY) {
-		view.setTranslationX(translationX);
-		view.setTranslationY(translationY);
-	}
-
-	public void onScaleRotation(float scaleX, float scaleY, float mDegree) {
-		view.setScaleX(scaleX);
-		view.setScaleY(scaleY);
-		view.setRotation(mDegree);
-	}
-
-	public float getScale() {
-		return view.getScaleX();
-	}
-
-	public float getRotation() {
-		return view.getRotation();
-	}
-
-	public int getWidth() {
-		return view.getWidth();
-	}
-
-	public int getHeight() {
-		return view.getHeight();
-	}
-
-	public int getLeft() {
-		return view.getLeft();
-	}
-
-	public int getTop() {
-		return view.getTop();
-	}
-
-	public int getRight() {
-		return view.getRight();
-	}
-
-	public int getBottom() {
-		return view.getBottom();
-	}
-
-	/**
-	 * SingleTouchView的中心点坐标，相对于其父类布局而言的
-	 */
-	PointF centerPoint;
-
-	public PointF getCenter() {
-		if (centerPoint == null) {
-			centerPoint = new PointF((view.getLeft() + view.getRight()) >> 1, (view.getTop() + view.getBottom()) >> 1);
-		}
-		return centerPoint;
-	}
-
-	public float getTranlateX() {
-		return view.getTranslationX();
-	}
-
-	public float getTranlateY() {
-		return view.getTranslationY();
-	}
-
-	private RectF postRect = new RectF();
-
-	public RectF getPostRect() {
-		postRect.set(view.getLeft(), view.getTop(), view.getRight(), view.getBottom());
-		postRect.offset(view.getTranslationX(), view.getTranslationY());
-		postRect.inset(-(view.getScaleX() - 1) * view.getWidth() / 2, -(view.getScaleY() - 1) * view.getHeight() / 2);
-		return postRect;
-	}
-
-	protected void onDoubleClicked() {
-		mSingleTouchView.setItem(this);
-		if (mOnStateChangedListener != null) {
-			mOnStateChangedListener.onDoubleClick(view);
-		}
-	}
-
-	protected void onClicked() {
-		mSingleTouchView.setItem(this);
-		if (mOnStateChangedListener != null) {
-			mOnStateChangedListener.onClicked(view);
-		}
-	}
-
-	protected void onUnbind() {
-		if (mOnStateChangedListener != null) {
-			mOnStateChangedListener.onUnbind(view);
-		}
-	}
-
-	private OnTouchListener itemOnTouchListener = new OnTouchListener() {
-
-		@Override
-		public boolean onTouch(View v, MotionEvent event) {
-			Logger.l("itemTouchEvent" + event.getAction());
-			view = v;
-			gestureScanner.onTouchEvent(event);
-			return true;
-		}
-	};
-
 	private OnGestureListener mOnGestureListener = new OnGestureListener() {
 
 		@Override
@@ -927,9 +1023,6 @@ class SigleTouchItem {
 
 		@Override
 		public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-			// Logger.l("onScroll ------ x = " + (-distanceX) + " y = " +
-			// (-distanceY));
-			// mSingleTouchView.onMove(-distanceX, -distanceY);
 			return false;
 		}
 
@@ -949,23 +1042,20 @@ class SigleTouchItem {
 	};
 	private GestureDetector.OnDoubleTapListener mOnDoubleTapListener = new GestureDetector.OnDoubleTapListener() {
 		public boolean onDoubleTap(MotionEvent e) {
-			// 双击时产生一次
 			Logger.l("onDoubleTap");
-			onDoubleClicked();
-			return true;
+			if (isFoucs()) {
+				item.onDoubleClicked();
+				return true;
+			}
+			return false;
 		}
 
 		public boolean onDoubleTapEvent(MotionEvent e) {
-			// 双击时产生两次
-			Logger.l("onDoubleTapEvent");
 			return false;
 		}
 
 		public boolean onSingleTapConfirmed(MotionEvent e) {
-			// 短快的点击算一次单击
-			Logger.l("onSingleTapConfirmed");
-			onClicked();
-			return true;
+			return false;
 		}
 	};
 
@@ -975,6 +1065,9 @@ class SigleTouchItem {
 		void onClicked(View view);
 
 		void onUnbind(View view);
-	}
 
+		void onSetting(View view);
+
+		void onClosed(View view);
+	}
 }

@@ -1,44 +1,47 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent" >
+    android:layout_height="match_parent" xmlns:app="http://schemas.android.com/apk/res/com.example.singletouchview">
 
     <com.example.singletouchview.SingleTouchView
         xmlns:app="http://schemas.android.com/apk/res-auto"
         android:id="@+id/SingleTouchView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#ff997711"
-        app:controlLocation="right_top"
+        app:controlLocation="right_bottom"
+        app:framePadding="2dp"
         app:frameColor="#0022ff"
         app:scale="1.2"
         app:src="@drawable/scale" >
-
-        <EditText
-            android:id="@+id/textview"
-            android:layout_width="210dp"
-            android:layout_height="176dp"
-            android:background="#88FF0000" />
-
-        <EditText
-            android:id="@+id/textview1"
-            android:layout_width="210dp"
-            android:layout_height="176dp"
-            android:background="#88FF0000" />
-
-        <EditText
-            android:id="@+id/textview2"
-            android:layout_width="210dp"
-            android:layout_height="176dp"
-            android:background="#88FF0000" />
     </com.example.singletouchview.SingleTouchView>
+
+    <ImageView
+        android:id="@+id/cutview"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#889922" />
+
+    <Button
+        android:id="@+id/add"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:text="add" />
+
+    <Button
+        android:id="@+id/shot"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="right"
+        android:text="shot" />
 
     <EditText
         android:id="@+id/textview_foucs"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#88FF0000"
+        android:background="#FF0000"
         android:visibility="invisible" />
 
 </FrameLayout>
