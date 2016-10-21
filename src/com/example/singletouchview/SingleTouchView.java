@@ -348,7 +348,7 @@ public class SingleTouchView extends FrameLayout {
 
 	@Override
 	public boolean dispatchTouchEvent(MotionEvent ev) {
-		// TODO Auto-generated method stub
+		getParent().requestDisallowInterceptTouchEvent(true);
 		return super.dispatchTouchEvent(ev);
 	}
 
